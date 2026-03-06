@@ -5,6 +5,7 @@ import {
   HeatmapFilters,
   HeatmapLoadingPhase,
   HeatmapPoint,
+  HeatmapRoute,
   HeatmapStats,
 } from '@/lib/types/heatmap';
 
@@ -41,7 +42,7 @@ export interface HeatmapFetchOptions {
 export const fetchHeatmapActivities = async (
   filters: HeatmapFilters,
   options?: HeatmapFetchOptions,
-): Promise<{ points: HeatmapPoint[]; stats: HeatmapStats; meta?: HeatmapApiSuccess['data']['meta'] }> => {
+): Promise<{ points: HeatmapPoint[]; routes: HeatmapRoute[]; stats: HeatmapStats; meta?: HeatmapApiSuccess['data']['meta'] }> => {
   options?.onProgressPhase?.({ phase: 'auth' });
 
   const response = await fetch(`/api/activities/heatmap?${buildQuery(filters)}`, {
@@ -78,6 +79,7 @@ export const fetchHeatmapActivities = async (
 
   return {
     points: result.data.points,
+    routes: Array.isArray(result.data.routes) ? result.data.routes : [],
     stats: result.data.stats,
     meta: responseMeta,
   };

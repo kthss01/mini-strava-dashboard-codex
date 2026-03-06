@@ -21,6 +21,13 @@ export interface HeatmapPoint {
   intensity: number;
 }
 
+export interface HeatmapRoute {
+  points: Array<{
+    lat: number;
+    lng: number;
+  }>;
+}
+
 export interface HeatmapStats {
   fetchedActivityCount: number;
   matchedActivityCount: number;
@@ -40,6 +47,7 @@ export interface HeatmapApiSuccess {
   success: true;
   data: {
     points: HeatmapPoint[];
+    routes?: HeatmapRoute[];
     stats: HeatmapStats;
     meta?: {
       phase?: HeatmapLoadingPhase;
