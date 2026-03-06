@@ -1,5 +1,6 @@
 import { SectionShell } from '@/components/common/section-shell';
 import { RecentActivity } from '@/lib/types/activity';
+import { ActivityFilters, ActivityPeriodFilter } from '@/lib/types/activity-filter';
 import { formatDateKR, formatDistance, formatDuration } from '@/lib/utils/format';
 
 interface ActivityListProps {
@@ -8,6 +9,10 @@ interface ActivityListProps {
   errorMessage: string | null;
   selectedActivityId: number | null;
   onSelectActivity: (activity: RecentActivity) => void;
+  filters: ActivityFilters;
+  activityTypes: string[];
+  periodOptions: Array<{ label: string; value: ActivityPeriodFilter }>;
+  onFiltersChange: (next: ActivityFilters) => void;
 }
 
 export function ActivityList({
@@ -16,18 +21,60 @@ export function ActivityList({
   errorMessage,
   selectedActivityId,
   onSelectActivity,
+  filters,
+  activityTypes,
+  periodOptions,
+  onFiltersChange,
 }: ActivityListProps) {
   return (
     <SectionShell
       title="최근 활동"
-      description="최근 30일 활동을 기반으로 표시됩니다."
+      description="필터 기준에 맞는 활동 목록입니다."
       action={
-        <button
-          type="button"
-          className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700"
-        >
-          필터 (다음 단계)
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="sr-only" htmlFor="activity-type-filter">
+            활동 종류 필터
+          </label>
+          <select
+            id="activity-type-filter"
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700"
+            value={filters.type}
+            onChange={(event) =>
+              onFiltersChange({
+                ...filters,
+                type: event.target.value,
+              })
+            }
+          >
+            <option value="all">모든 종류</option>
+            {activityTypes.map((type) => (
+              <option key={type} value={type}>
+                {type}
+              </option>
+            ))}
+          </select>
+
+          <label className="sr-only" htmlFor="activity-period-filter">
+            기간 필터
+          </label>
+          <select
+            id="activity-period-filter"
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700"
+            value={filters.period}
+            onChange={(event) =>
+              onFiltersChange({
+                ...filters,
+                period: event.target.value as ActivityPeriodFilter,
+              })
+            }
+          >
+            {periodOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
       }
     >
       {isLoading ? (
@@ -45,8 +92,8 @@ export function ActivityList({
 
       {!isLoading && !errorMessage && activities.length === 0 ? (
         <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center">
-          <p className="text-base font-semibold text-slate-800">표시할 활동이 없습니다.</p>
-          <p className="mt-2 text-sm text-slate-500">최근 활동이 생기면 이곳에 표시됩니다.</p>
+          <p className="text-base font-semibold text-slate-800">필터 조건에 맞는 활동이 없습니다.</p>
+          <p className="mt-2 text-sm text-slate-500">다른 종류 또는 기간을 선택해보세요.</p>
         </div>
       ) : null}
 

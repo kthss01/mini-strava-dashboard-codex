@@ -13,23 +13,23 @@ export function StatCards({ activities }: StatCardsProps) {
     {
       label: '총 활동 수',
       value: `${formatNumber(stats.totalActivities)}회`,
-      helper: '전체 기간 기준',
+      helper: '현재 필터 기준',
       accent: '🏁',
     },
     {
       label: '총 거리',
       value: formatDistanceFromMeters(stats.totalDistanceMeters),
-      helper: '미터 합산 후 km 변환',
+      helper: '필터된 활동 거리 합산',
       accent: '📏',
     },
     {
       label: '총 이동 시간',
       value: formatDurationFromSeconds(stats.totalMovingTimeSeconds),
-      helper: 'moving_time 기준',
+      helper: '필터된 moving_time 합산',
       accent: '⏱️',
     },
     {
-      label: '최근 30일 활동 수',
+      label: '최근 30일 활동 수(필터 내)',
       value: `${formatNumber(stats.recent30DaysActivities)}회`,
       helper: '오늘 기준 최근 30일',
       accent: '🗓️',
