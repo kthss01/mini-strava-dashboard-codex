@@ -592,8 +592,10 @@ export async function GET(request: NextRequest) {
           points: data.points,
           stats: data.stats,
           meta: {
+            phase: 'aggregateRoutes',
             cacheHit,
             cacheTtlSeconds: ttlSeconds,
+            timings: routeTimings,
             timingsMs: routeTimings,
           },
         },
@@ -614,6 +616,8 @@ export async function GET(request: NextRequest) {
         },
         data: {
           meta: {
+            phase: 'aggregateRoutes',
+            timings: routeTimings,
             timingsMs: routeTimings,
             lastSuccessfulStep,
             fetchedActivityCount,
