@@ -13,16 +13,29 @@ const buildQuery = (filters: HeatmapFilters): string => {
 
   search.set('sportType', filters.sportType);
 
+  if (filters.sportType === 'Ride' && filters.rideSubType !== 'all') {
+    search.set('rideSubType', filters.rideSubType);
+  }
+
   return search.toString();
 };
 
+export interface HeatmapFetchOptions {
+  onProgress?: (percent: number) => void;
+}
+
 export const fetchHeatmapActivities = async (
   filters: HeatmapFilters,
+  options?: HeatmapFetchOptions,
 ): Promise<{ points: HeatmapPoint[]; stats: HeatmapStats }> => {
+  options?.onProgress?.(20);
+
   const response = await fetch(`/api/activities/heatmap?${buildQuery(filters)}`, {
     method: 'GET',
     cache: 'no-store',
   });
+
+  options?.onProgress?.(70);
 
   const payload: unknown = await response.json().catch(() => null);
 
@@ -35,6 +48,8 @@ export const fetchHeatmapActivities = async (
   if (!result?.data || !Array.isArray(result.data.points) || !result.data.stats) {
     throw new Error('히트맵 응답 형식이 올바르지 않습니다.');
   }
+
+  options?.onProgress?.(100);
 
   return {
     points: result.data.points,
