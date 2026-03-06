@@ -73,6 +73,7 @@ export function HeatmapClient() {
   const [phaseTimings, setPhaseTimings] = useState<HeatmapApiTimings | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [hasRequested, setHasRequested] = useState(false);
+  const [showExactRoute, setShowExactRoute] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const hasPoints = points.length > 0;
@@ -265,6 +266,16 @@ export function HeatmapClient() {
               >
                 히트맵 불러오기
               </button>
+
+              <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={showExactRoute}
+                  onChange={(event) => setShowExactRoute(event.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300 text-blue-600"
+                />
+                <span>이동 경로를 정확한 점 위치로 보기</span>
+              </label>
             </div>
           </SectionShell>
 
@@ -283,13 +294,16 @@ export function HeatmapClient() {
         </div>
 
         <div className="lg:col-span-8">
-          <SectionShell title="활동 히트맵" description="진한 색상일수록 자주 지나간 구간입니다.">
+          <SectionShell
+            title="활동 히트맵"
+            description={showExactRoute ? '체크 해제 시 활동량 기준 히트맵으로 돌아갑니다.' : '진한 색상일수록 자주 지나간 구간입니다.'}
+          >
             <div className="relative h-[560px] overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
               {isLoading ? renderLoadingState() : null}
               {errorMessage ? <div className="absolute inset-x-0 bottom-0 z-20 bg-rose-50 px-4 py-2 text-center text-sm text-rose-600">{errorMessage}</div> : null}
               {!hasRequested ? <div className="flex h-full items-center justify-center px-6 text-center text-sm text-slate-600">필터를 설정하고 &quot;히트맵 불러오기&quot;를 눌러주세요.</div> : null}
               {hasRequested && !hasPoints ? <div className="flex h-full items-center justify-center px-6 text-center text-sm text-slate-600">조건에 맞는 경로 데이터가 없습니다.</div> : null}
-              {hasPoints ? <HeatmapMap points={points} /> : null}
+              {hasPoints ? <HeatmapMap points={points} showExactRoute={showExactRoute} /> : null}
             </div>
           </SectionShell>
         </div>
