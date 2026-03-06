@@ -14,6 +14,10 @@ interface ActivityApiItem {
   distance: number;
   moving_time: number;
   start_date: string;
+  start_latlng: number[];
+  map: {
+    summary_polyline: string | null;
+  };
 }
 
 interface RecentActivitiesApiSuccess {
@@ -42,6 +46,12 @@ const EMPTY_SUMMARY: ActivitySummary = {
   totalElevationGainM: 0,
 };
 
+const isNumberPair = (value: unknown): value is [number, number] =>
+  Array.isArray(value) &&
+  value.length >= 2 &&
+  typeof value[0] === 'number' &&
+  typeof value[1] === 'number';
+
 const isActivityApiItem = (value: unknown): value is ActivityApiItem => {
   if (!value || typeof value !== 'object') {
     return false;
@@ -55,7 +65,11 @@ const isActivityApiItem = (value: unknown): value is ActivityApiItem => {
     typeof candidate.type === 'string' &&
     typeof candidate.distance === 'number' &&
     typeof candidate.moving_time === 'number' &&
-    typeof candidate.start_date === 'string'
+    typeof candidate.start_date === 'string' &&
+    Array.isArray(candidate.start_latlng) &&
+    Boolean(candidate.map) &&
+    typeof candidate.map === 'object' &&
+    'summary_polyline' in candidate.map
   );
 };
 
@@ -67,6 +81,10 @@ const normalizeActivities = (activities: ActivityApiItem[]): RecentActivity[] =>
     distance: activity.distance,
     movingTime: activity.moving_time,
     startDate: activity.start_date,
+    startLatlng: isNumberPair(activity.start_latlng)
+      ? { lat: activity.start_latlng[0], lng: activity.start_latlng[1] }
+      : null,
+    summaryPolyline: typeof activity.map.summary_polyline === 'string' ? activity.map.summary_polyline : null,
   }));
 
 export function ActivitySection({ onSummaryChange, onSelectedActivityChange }: ActivitySectionProps) {
@@ -159,7 +177,7 @@ export function ActivitySection({ onSummaryChange, onSelectedActivityChange }: A
         startDateLocal: activity.startDate,
         timezone: '',
         locationLabel: '',
-        mapPolyline: null,
+        mapPolyline: activity.summaryPolyline,
       })),
     );
   }, [activities]);
