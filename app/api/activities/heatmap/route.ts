@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { unstable_cache } from 'next/cache';
 
 import { apiError } from '@/lib/api-response';
 import { getValidStravaSession } from '@/lib/strava-oauth';
@@ -18,6 +19,58 @@ const SUPPORTED_RIDE_SUB_TYPES = new Set([
   'EBikeRide',
   'EMountainBikeRide',
 ]);
+const DEFAULT_CACHE_TTL_SECONDS = 60 * 15;
+
+type HeatmapData = {
+  points: ReturnType<typeof buildAggregatedHeatmapPoints>['points'];
+  stats: {
+    fetchedActivityCount: number;
+    matchedActivityCount: number;
+    usedPolylineActivityCount: number;
+    rawPointCount: number;
+    aggregatedPointCount: number;
+    totalDistanceKm: number;
+    totalMovingTimeHours: number;
+    totalElevationGainM: number;
+    typeBreakdown: Array<{ type: string; count: number }>;
+  };
+};
+
+type MemoryCacheItem = {
+  expiresAt: number;
+  value: HeatmapData;
+};
+
+const EDGE_MEMORY_CACHE_KEY = '__heatmap_route_cache__';
+
+const getEdgeMemoryCache = (): Map<string, MemoryCacheItem> => {
+  const globalCache = globalThis as typeof globalThis & {
+    [EDGE_MEMORY_CACHE_KEY]?: Map<string, MemoryCacheItem>;
+  };
+
+  if (!globalCache[EDGE_MEMORY_CACHE_KEY]) {
+    globalCache[EDGE_MEMORY_CACHE_KEY] = new Map<string, MemoryCacheItem>();
+  }
+
+  return globalCache[EDGE_MEMORY_CACHE_KEY];
+};
+
+const getCacheTtlSeconds = (): number => {
+  const parsed = Number.parseInt(process.env.STRAVA_HEATMAP_CACHE_TTL_SECONDS ?? '', 10);
+  if (!Number.isFinite(parsed) || parsed < 60) {
+    return DEFAULT_CACHE_TTL_SECONDS;
+  }
+
+  return Math.min(parsed, 60 * 30);
+};
+
+const makeHeatmapCacheKey = (
+  athleteId: number,
+  year: number | null,
+  month: number | null,
+  sportType: string,
+  rideSubType: string,
+): string => [athleteId, year ?? 'all', month ?? 'all', sportType, rideSubType].join(':');
 
 const toQueryNumber = (value: string | null): number | null => {
   if (!value) {
@@ -153,6 +206,100 @@ const fetchActivitiesByFilterWindow = async (
   return activities;
 };
 
+const computeHeatmapData = async (
+  accessToken: string,
+  year: number | null,
+  month: number | null,
+  sportType: string,
+  rideSubType: string,
+): Promise<HeatmapData> => {
+  const timeWindow = toUtcEpochWindow(year, month);
+  const fetchedActivities = await fetchActivitiesByFilterWindow(accessToken, timeWindow);
+  const matched = fetchedActivities.filter((activity) => isMatchedFilter(activity, sportType, rideSubType));
+  const polylineActivities = matched.filter((activity) => Boolean(activity.map?.summary_polyline));
+  const polylines = polylineActivities
+    .map((activity) => activity.map?.summary_polyline)
+    .filter((value): value is string => typeof value === 'string' && value.length > 0);
+
+  const { points, rawPointCount } = buildAggregatedHeatmapPoints(polylines);
+
+  const totalDistanceKm = Number((matched.reduce((sum, activity) => sum + activity.distance, 0) / 1000).toFixed(2));
+  const totalMovingTimeHours = Number((matched.reduce((sum, activity) => sum + activity.moving_time, 0) / 3600).toFixed(1));
+  const totalElevationGainM = Math.round(matched.reduce((sum, activity) => sum + activity.total_elevation_gain, 0));
+
+  const typeBreakdown = Array.from(
+    matched.reduce((acc, activity) => {
+      acc.set(activity.type, (acc.get(activity.type) ?? 0) + 1);
+      return acc;
+    }, new Map<string, number>()),
+  )
+    .map(([type, count]) => ({ type, count }))
+    .sort((a, b) => b.count - a.count);
+
+  return {
+    points,
+    stats: {
+      fetchedActivityCount: fetchedActivities.length,
+      matchedActivityCount: matched.length,
+      usedPolylineActivityCount: polylineActivities.length,
+      rawPointCount,
+      aggregatedPointCount: points.length,
+      totalDistanceKm,
+      totalMovingTimeHours,
+      totalElevationGainM,
+      typeBreakdown,
+    },
+  };
+};
+
+const getCachedHeatmapData = async (
+  accessToken: string,
+  cacheKey: string,
+  ttlSeconds: number,
+  params: {
+    year: number | null;
+    month: number | null;
+    sportType: string;
+    rideSubType: string;
+  },
+): Promise<{ data: HeatmapData; cacheHit: boolean }> => {
+  if (process.env.NEXT_RUNTIME === 'edge') {
+    const edgeCache = getEdgeMemoryCache();
+    const cached = edgeCache.get(cacheKey);
+    const now = Date.now();
+
+    if (cached && cached.expiresAt > now) {
+      return { data: cached.value, cacheHit: true };
+    }
+
+    const data = await computeHeatmapData(accessToken, params.year, params.month, params.sportType, params.rideSubType);
+    edgeCache.set(cacheKey, {
+      value: data,
+      expiresAt: now + ttlSeconds * 1000,
+    });
+
+    return { data, cacheHit: false };
+  }
+
+  let computed = false;
+  const cachedResolver = unstable_cache(
+    async () => {
+      computed = true;
+      return computeHeatmapData(accessToken, params.year, params.month, params.sportType, params.rideSubType);
+    },
+    ['strava-heatmap', cacheKey],
+    {
+      revalidate: ttlSeconds,
+    },
+  );
+
+  const data = await cachedResolver();
+  return {
+    data,
+    cacheHit: !computed,
+  };
+};
+
 export async function GET(request: NextRequest) {
   try {
     const sessionResult = await getValidStravaSession();
@@ -186,44 +333,36 @@ export async function GET(request: NextRequest) {
       return apiError(400, 'INVALID_RIDE_SUB_TYPE_FILTER', 'Ride 세부 종목 필터는 Ride 선택 시에만 사용 가능합니다.');
     }
 
-    const timeWindow = toUtcEpochWindow(year, month);
-    const fetchedActivities = await fetchActivitiesByFilterWindow(sessionResult.session.accessToken, timeWindow);
-    const matched = fetchedActivities.filter((activity) => isMatchedFilter(activity, sportType, rideSubType));
-    const polylineActivities = matched.filter((activity) => Boolean(activity.map?.summary_polyline));
-    const polylines = polylineActivities
-      .map((activity) => activity.map?.summary_polyline)
-      .filter((value): value is string => typeof value === 'string' && value.length > 0);
+    const ttlSeconds = getCacheTtlSeconds();
+    const cacheKey = makeHeatmapCacheKey(
+      sessionResult.session.athleteId,
+      year,
+      month,
+      sportType,
+      rideSubType,
+    );
 
-    const { points, rawPointCount } = buildAggregatedHeatmapPoints(polylines);
-
-    const totalDistanceKm = Number((matched.reduce((sum, activity) => sum + activity.distance, 0) / 1000).toFixed(2));
-    const totalMovingTimeHours = Number((matched.reduce((sum, activity) => sum + activity.moving_time, 0) / 3600).toFixed(1));
-    const totalElevationGainM = Math.round(matched.reduce((sum, activity) => sum + activity.total_elevation_gain, 0));
-
-    const typeBreakdown = Array.from(
-      matched.reduce((acc, activity) => {
-        acc.set(activity.type, (acc.get(activity.type) ?? 0) + 1);
-        return acc;
-      }, new Map<string, number>()),
-    )
-      .map(([type, count]) => ({ type, count }))
-      .sort((a, b) => b.count - a.count);
+    const { data, cacheHit } = await getCachedHeatmapData(
+      sessionResult.session.accessToken,
+      cacheKey,
+      ttlSeconds,
+      {
+        year,
+        month,
+        sportType,
+        rideSubType,
+      },
+    );
 
     return NextResponse.json(
       {
         success: true,
         data: {
-          points,
-          stats: {
-            fetchedActivityCount: fetchedActivities.length,
-            matchedActivityCount: matched.length,
-            usedPolylineActivityCount: polylineActivities.length,
-            rawPointCount,
-            aggregatedPointCount: points.length,
-            totalDistanceKm,
-            totalMovingTimeHours,
-            totalElevationGainM,
-            typeBreakdown,
+          points: data.points,
+          stats: data.stats,
+          meta: {
+            cacheHit,
+            cacheTtlSeconds: ttlSeconds,
           },
         },
       },
