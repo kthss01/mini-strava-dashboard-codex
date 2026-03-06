@@ -12,6 +12,34 @@ import { HeatmapPoint } from '@/lib/types/heatmap';
 
 const DEFAULT_CENTER: LatLngExpression = [37.5665, 126.978];
 const DEFAULT_ZOOM = 11;
+const SINGLE_POINT_ZOOM = 12;
+const MAX_FIT_ZOOM = 13;
+
+const pickApproximateRange = (values: number[]): [number, number] => {
+  const sorted = [...values].sort((a, b) => a - b);
+  const trimCount = Math.floor(sorted.length * 0.05);
+
+  const min = sorted[Math.min(trimCount, sorted.length - 1)];
+  const max = sorted[Math.max(sorted.length - trimCount - 1, 0)];
+
+  return [min, max];
+};
+
+const getApproximateBounds = (points: HeatmapPoint[]): L.LatLngBounds | null => {
+  if (points.length < 2) {
+    return null;
+  }
+
+  const latitudes = points.map((point) => point.lat);
+  const longitudes = points.map((point) => point.lng);
+  const [minLat, maxLat] = pickApproximateRange(latitudes);
+  const [minLng, maxLng] = pickApproximateRange(longitudes);
+
+  return L.latLngBounds(
+    [minLat, minLng],
+    [maxLat, maxLng],
+  );
+};
 
 function HeatLayer({ points }: { points: HeatmapPoint[] }) {
   const map = useMap();
@@ -35,9 +63,16 @@ function HeatLayer({ points }: { points: HeatmapPoint[] }) {
 
     heatLayer.addTo(map);
 
-    if (points.length > 0) {
-      const bounds = L.latLngBounds(points.map((point) => [point.lat, point.lng] as [number, number]));
-      map.fitBounds(bounds.pad(0.1));
+    if (points.length > 1) {
+      const approximateBounds = getApproximateBounds(points);
+
+      if (approximateBounds && approximateBounds.isValid()) {
+        map.fitBounds(approximateBounds.pad(0.18), {
+          maxZoom: MAX_FIT_ZOOM,
+        });
+      }
+    } else if (points.length === 1) {
+      map.setView([points[0].lat, points[0].lng], SINGLE_POINT_ZOOM);
     } else {
       map.setView(DEFAULT_CENTER, DEFAULT_ZOOM);
     }
