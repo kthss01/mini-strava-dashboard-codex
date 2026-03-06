@@ -100,6 +100,7 @@ npm run start
 - Strava OAuth 연결 버튼
 - 최근 활동 리스트 조회
 - 종류/기간 필터
+- 활동 히트맵 페이지(`/heatmap`)
 - 통계 카드(활동 수, 총 거리, 총 이동 시간, 최근 30일 활동 수)
 - 선택 활동 지도 표시(시작점/경로)
 - **선택 활동 상세 패널**
@@ -134,3 +135,22 @@ npm run start
 - 활동 상세 모달 + Splits/심박/파워(권한 및 데이터 존재 시)
 - 인증 상태/토큰 만료 UX 개선(재연결 안내)
 - 테스트 자동화 추가 (Vitest/Playwright)
+
+
+## 히트맵 페이지 사용법
+
+- 경로: `/heatmap`
+- 필터: 연도, 월, 종목(Ride/Run/Walk/Hike/전체)
+- **"히트맵 불러오기" 버튼 클릭 시에만** 서버 API를 호출합니다.
+- 서버 API(`/api/activities/heatmap`)에서 Strava 활동을 pagination으로 수집한 뒤
+  summary polyline을 디코딩/다운샘플링/격자 집계하여 heatmap 포인트를 반환합니다.
+- 활동이 많아도 과도한 포인트 렌더링을 줄이기 위해 기본 downsampling + intensity aggregation을 적용했습니다.
+
+### 추가 패키지
+
+- `leaflet.heat`: Leaflet heat layer 렌더링 플러그인
+
+```bash
+npm install
+```
+
