@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { ActivitySection } from '@/components/dashboard/activity-section';
 import { Header } from '@/components/dashboard/header';
+import { PageTabs } from '@/components/common/page-tabs';
 import { MapPanel } from '@/components/dashboard/map-panel';
 import { StatCards } from '@/components/dashboard/stat-cards';
 import { fetchRecentActivities } from '@/lib/api/recent-activities';
@@ -81,6 +82,7 @@ export function DashboardClient() {
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-6 px-4 py-8 lg:px-8">
       <Header />
+      <PageTabs current="dashboard" />
       <StatCards activities={filteredActivities} />
 
       <section className="grid gap-6 lg:grid-cols-12">
