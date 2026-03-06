@@ -1,13 +1,20 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 
-import { Header } from '@/components/dashboard/header';
 import { PageTabs } from '@/components/common/page-tabs';
 import { SectionShell } from '@/components/common/section-shell';
+import { Header } from '@/components/dashboard/header';
 import { fetchHeatmapActivities } from '@/lib/api/heatmap-activities';
-import { HeatmapFilters, HeatmapPoint, HeatmapStats, HeatmapSportType } from '@/lib/types/heatmap';
+import {
+  HeatmapApiTimings,
+  HeatmapFilters,
+  HeatmapLoadingPhase,
+  HeatmapPoint,
+  HeatmapSportType,
+  HeatmapStats,
+} from '@/lib/types/heatmap';
 
 const HeatmapMap = dynamic(
   () => import('@/components/heatmap/heatmap-map').then((module) => module.HeatmapMap),
@@ -46,16 +53,30 @@ const DEFAULT_FILTERS: HeatmapFilters = {
   rideSubType: 'all',
 };
 
+const PHASE_ORDER: HeatmapLoadingPhase[] = ['auth', 'fetchActivities', 'aggregateRoutes', 'render'];
+
+const PHASE_LABELS: Record<HeatmapLoadingPhase, string> = {
+  auth: '인증 확인',
+  fetchActivities: '활동 조회',
+  aggregateRoutes: '경로 집계',
+  render: '렌더링',
+};
+
+const isAbortError = (error: unknown): boolean => error instanceof DOMException && error.name === 'AbortError';
+
 export function HeatmapClient() {
   const [filters, setFilters] = useState<HeatmapFilters>(DEFAULT_FILTERS);
   const [points, setPoints] = useState<HeatmapPoint[]>([]);
   const [stats, setStats] = useState<HeatmapStats | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [loadingProgress, setLoadingProgress] = useState(0);
+  const [loadingPhase, setLoadingPhase] = useState<HeatmapLoadingPhase>('auth');
+  const [phaseTimings, setPhaseTimings] = useState<HeatmapApiTimings | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [hasRequested, setHasRequested] = useState(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const hasPoints = points.length > 0;
+  const loadingPhaseIndex = PHASE_ORDER.indexOf(loadingPhase);
 
   const summary = useMemo(() => {
     if (!stats) return null;
@@ -77,28 +98,74 @@ export function HeatmapClient() {
   }, [stats]);
 
   const onClickFetch = async () => {
+    abortControllerRef.current?.abort();
+
+    const nextController = new AbortController();
+    abortControllerRef.current = nextController;
+
     setIsLoading(true);
-    setLoadingProgress(5);
+    setLoadingPhase('auth');
+    setPhaseTimings(null);
     setErrorMessage(null);
     setHasRequested(true);
 
     try {
       const response = await fetchHeatmapActivities(filters, {
-        onProgress: (percent) => {
-          setLoadingProgress(percent);
+        signal: nextController.signal,
+        onProgressPhase: (update) => {
+          setLoadingPhase(update.phase);
+          if (update.timings) {
+            setPhaseTimings(update.timings);
+          }
         },
       });
+
+      if (abortControllerRef.current !== nextController) {
+        return;
+      }
+
       setPoints(response.points);
       setStats(response.stats);
+      const responseTimings = response.meta?.timings ?? response.meta?.timingsMs;
+      if (responseTimings) {
+        setPhaseTimings(responseTimings);
+      }
     } catch (error) {
+      if (isAbortError(error)) {
+        return;
+      }
+
+      if (abortControllerRef.current !== nextController) {
+        return;
+      }
+
       const message = error instanceof Error ? error.message : '히트맵 조회 중 오류가 발생했습니다.';
-      setPoints([]);
-      setStats(null);
       setErrorMessage(message);
     } finally {
-      setIsLoading(false);
+      if (abortControllerRef.current === nextController) {
+        abortControllerRef.current = null;
+        setIsLoading(false);
+      }
     }
   };
+
+  const renderLoadingState = () => (
+    <div className="absolute inset-x-0 top-0 z-20 border-b border-slate-200/80 bg-white/90 px-4 py-3 backdrop-blur-sm">
+      <p className="text-sm font-semibold text-slate-700">히트맵 갱신 중: {PHASE_LABELS[loadingPhase]}</p>
+      <ol className="mt-2 grid gap-1 text-xs text-slate-500 md:grid-cols-2">
+        {PHASE_ORDER.map((phase, index) => {
+          const isDone = index < loadingPhaseIndex;
+          const isCurrent = phase === loadingPhase;
+          return (
+            <li key={phase} className={isDone || isCurrent ? 'text-blue-700' : undefined}>
+              {isDone ? '✓' : isCurrent ? '•' : '○'} {PHASE_LABELS[phase]}
+            </li>
+          );
+        })}
+      </ol>
+      {phaseTimings?.total ? <p className="mt-1 text-[11px] text-slate-500">최근 서버 응답 시간: {phaseTimings.total.toFixed(2)}ms</p> : null}
+    </div>
+  );
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-6 px-4 py-8 lg:px-8">
@@ -193,9 +260,8 @@ export function HeatmapClient() {
 
               <button
                 type="button"
-                disabled={isLoading}
                 onClick={onClickFetch}
-                className="w-full rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+                className="w-full rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700"
               >
                 히트맵 불러오기
               </button>
@@ -218,22 +284,12 @@ export function HeatmapClient() {
 
         <div className="lg:col-span-8">
           <SectionShell title="활동 히트맵" description="진한 색상일수록 자주 지나간 구간입니다.">
-            <div className="h-[560px] overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
-              {isLoading ? (
-                <div className="flex h-full flex-col items-center justify-center gap-3 px-8">
-                  <div className="h-3 w-full max-w-md overflow-hidden rounded-full bg-slate-200">
-                    <div
-                      className="h-full rounded-full bg-blue-600 transition-all"
-                      style={{ width: `${loadingProgress}%` }}
-                    />
-                  </div>
-                  <p className="text-sm font-semibold text-slate-700">히트맵 데이터를 불러오는 중... {loadingProgress}%</p>
-                </div>
-              ) : null}
-              {!isLoading && errorMessage ? <div className="flex h-full items-center justify-center px-6 text-center text-sm text-rose-600">{errorMessage}</div> : null}
-              {!isLoading && !errorMessage && !hasRequested ? <div className="flex h-full items-center justify-center px-6 text-center text-sm text-slate-600">필터를 설정하고 &quot;히트맵 불러오기&quot;를 눌러주세요.</div> : null}
-              {!isLoading && !errorMessage && hasRequested && !hasPoints ? <div className="flex h-full items-center justify-center px-6 text-center text-sm text-slate-600">조건에 맞는 경로 데이터가 없습니다.</div> : null}
-              {!isLoading && !errorMessage && hasPoints ? <HeatmapMap points={points} /> : null}
+            <div className="relative h-[560px] overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
+              {isLoading ? renderLoadingState() : null}
+              {errorMessage ? <div className="absolute inset-x-0 bottom-0 z-20 bg-rose-50 px-4 py-2 text-center text-sm text-rose-600">{errorMessage}</div> : null}
+              {!hasRequested ? <div className="flex h-full items-center justify-center px-6 text-center text-sm text-slate-600">필터를 설정하고 &quot;히트맵 불러오기&quot;를 눌러주세요.</div> : null}
+              {hasRequested && !hasPoints ? <div className="flex h-full items-center justify-center px-6 text-center text-sm text-slate-600">조건에 맞는 경로 데이터가 없습니다.</div> : null}
+              {hasPoints ? <HeatmapMap points={points} /> : null}
             </div>
           </SectionShell>
         </div>

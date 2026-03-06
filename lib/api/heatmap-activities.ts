@@ -1,4 +1,12 @@
-import { HeatmapApiError, HeatmapApiSuccess, HeatmapFilters, HeatmapPoint, HeatmapStats } from '@/lib/types/heatmap';
+import {
+  HeatmapApiError,
+  HeatmapApiSuccess,
+  HeatmapApiTimings,
+  HeatmapFilters,
+  HeatmapLoadingPhase,
+  HeatmapPoint,
+  HeatmapStats,
+} from '@/lib/types/heatmap';
 
 const buildQuery = (filters: HeatmapFilters): string => {
   const search = new URLSearchParams();
@@ -20,22 +28,29 @@ const buildQuery = (filters: HeatmapFilters): string => {
   return search.toString();
 };
 
+export interface HeatmapProgressUpdate {
+  phase: HeatmapLoadingPhase;
+  timings?: HeatmapApiTimings;
+}
+
 export interface HeatmapFetchOptions {
-  onProgress?: (percent: number) => void;
+  signal?: AbortSignal;
+  onProgressPhase?: (update: HeatmapProgressUpdate) => void;
 }
 
 export const fetchHeatmapActivities = async (
   filters: HeatmapFilters,
   options?: HeatmapFetchOptions,
-): Promise<{ points: HeatmapPoint[]; stats: HeatmapStats }> => {
-  options?.onProgress?.(20);
+): Promise<{ points: HeatmapPoint[]; stats: HeatmapStats; meta?: HeatmapApiSuccess['data']['meta'] }> => {
+  options?.onProgressPhase?.({ phase: 'auth' });
 
   const response = await fetch(`/api/activities/heatmap?${buildQuery(filters)}`, {
     method: 'GET',
     cache: 'no-store',
+    signal: options?.signal,
   });
 
-  options?.onProgress?.(70);
+  options?.onProgressPhase?.({ phase: 'fetchActivities' });
 
   const payload: unknown = await response.json().catch(() => null);
 
@@ -49,10 +64,21 @@ export const fetchHeatmapActivities = async (
     throw new Error('히트맵 응답 형식이 올바르지 않습니다.');
   }
 
-  options?.onProgress?.(100);
+  const responseMeta = result.data.meta;
+  const timings = responseMeta?.timings ?? responseMeta?.timingsMs;
+
+  options?.onProgressPhase?.({
+    phase: responseMeta?.phase ?? 'aggregateRoutes',
+    timings,
+  });
+  options?.onProgressPhase?.({
+    phase: 'render',
+    timings,
+  });
 
   return {
     points: result.data.points,
     stats: result.data.stats,
+    meta: responseMeta,
   };
 };

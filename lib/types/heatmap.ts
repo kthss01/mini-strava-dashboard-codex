@@ -41,7 +41,25 @@ export interface HeatmapApiSuccess {
   data: {
     points: HeatmapPoint[];
     stats: HeatmapStats;
+    meta?: {
+      phase?: HeatmapLoadingPhase;
+      timings?: HeatmapApiTimings;
+      timingsMs?: HeatmapApiTimings;
+      [key: string]: unknown;
+    };
   };
+}
+
+export type HeatmapLoadingPhase = 'auth' | 'fetchActivities' | 'aggregateRoutes' | 'render';
+
+export interface HeatmapApiTimings {
+  session?: number;
+  stravaFetch?: number;
+  filter?: number;
+  polylineAggregate?: number;
+  responseSerialize?: number;
+  total?: number;
+  [key: string]: number | undefined;
 }
 
 export interface HeatmapApiError {
