@@ -5,7 +5,7 @@ import 'leaflet/dist/leaflet.css';
 import { useEffect } from 'react';
 
 import L, { LatLngExpression } from 'leaflet';
-import { MapContainer, TileLayer, useMap } from 'react-leaflet';
+import { MapContainer, Polyline, TileLayer, useMap } from 'react-leaflet';
 import 'leaflet.heat';
 
 import { HeatmapPoint } from '@/lib/types/heatmap';
@@ -41,6 +41,26 @@ const getApproximateBounds = (points: HeatmapPoint[]): L.LatLngBounds | null => 
   );
 };
 
+function fitMapToPoints(map: L.Map, points: HeatmapPoint[]) {
+  if (points.length > 1) {
+    const approximateBounds = getApproximateBounds(points);
+
+    if (approximateBounds && approximateBounds.isValid()) {
+      map.fitBounds(approximateBounds.pad(0.18), {
+        maxZoom: MAX_FIT_ZOOM,
+      });
+      return;
+    }
+  }
+
+  if (points.length === 1) {
+    map.setView([points[0].lat, points[0].lng], SINGLE_POINT_ZOOM);
+    return;
+  }
+
+  map.setView(DEFAULT_CENTER, DEFAULT_ZOOM);
+}
+
 function HeatLayer({ points }: { points: HeatmapPoint[] }) {
   const map = useMap();
 
@@ -63,19 +83,7 @@ function HeatLayer({ points }: { points: HeatmapPoint[] }) {
 
     heatLayer.addTo(map);
 
-    if (points.length > 1) {
-      const approximateBounds = getApproximateBounds(points);
-
-      if (approximateBounds && approximateBounds.isValid()) {
-        map.fitBounds(approximateBounds.pad(0.18), {
-          maxZoom: MAX_FIT_ZOOM,
-        });
-      }
-    } else if (points.length === 1) {
-      map.setView([points[0].lat, points[0].lng], SINGLE_POINT_ZOOM);
-    } else {
-      map.setView(DEFAULT_CENTER, DEFAULT_ZOOM);
-    }
+    fitMapToPoints(map, points);
 
     return () => {
       map.removeLayer(heatLayer);
@@ -85,14 +93,38 @@ function HeatLayer({ points }: { points: HeatmapPoint[] }) {
   return null;
 }
 
-export function HeatmapMap({ points }: { points: HeatmapPoint[] }) {
+function ExactRouteLayer({ points }: { points: HeatmapPoint[] }) {
+  const map = useMap();
+  const positions = points.map((point) => [point.lat, point.lng] as [number, number]);
+
+  useEffect(() => {
+    fitMapToPoints(map, points);
+  }, [map, points]);
+
+  if (positions.length < 2) {
+    return null;
+  }
+
+  return (
+    <Polyline
+      positions={positions}
+      pathOptions={{
+        color: '#2563eb',
+        weight: 3,
+        opacity: 0.9,
+      }}
+    />
+  );
+}
+
+export function HeatmapMap({ points, showExactRoute }: { points: HeatmapPoint[]; showExactRoute: boolean }) {
   return (
     <MapContainer center={DEFAULT_CENTER} zoom={DEFAULT_ZOOM} className="h-full w-full" scrollWheelZoom>
       <TileLayer
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
-      <HeatLayer points={points} />
+      {showExactRoute ? <ExactRouteLayer points={points} /> : <HeatLayer points={points} />}
     </MapContainer>
   );
 }
