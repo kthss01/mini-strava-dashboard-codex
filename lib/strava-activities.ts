@@ -8,6 +8,8 @@ export interface RecentActivityResponseItem {
   moving_time: number;
   elapsed_time: number;
   start_date: string;
+  average_speed: number | null;
+  total_elevation_gain: number | null;
   start_latlng: number[];
   map: {
     summary_polyline: string | null;
@@ -23,6 +25,9 @@ const toStartLatlng = (startLatlng: unknown): number[] => {
   return onlyNumbers.slice(0, 2);
 };
 
+const toNullableNumber = (value: unknown): number | null =>
+  typeof value === 'number' && Number.isFinite(value) ? value : null;
+
 export const toRecentActivityResponseItem = (
   activity: StravaActivity,
 ): RecentActivityResponseItem => ({
@@ -33,6 +38,8 @@ export const toRecentActivityResponseItem = (
   moving_time: activity.moving_time,
   elapsed_time: activity.elapsed_time,
   start_date: activity.start_date,
+  average_speed: toNullableNumber((activity as Partial<StravaActivity>).average_speed),
+  total_elevation_gain: toNullableNumber((activity as Partial<StravaActivity>).total_elevation_gain),
   start_latlng: toStartLatlng((activity as StravaActivity & { start_latlng?: unknown }).start_latlng),
   map: {
     summary_polyline: activity.map?.summary_polyline ?? null,

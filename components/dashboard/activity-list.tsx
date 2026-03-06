@@ -1,7 +1,7 @@
 import { SectionShell } from '@/components/common/section-shell';
 import { RecentActivity } from '@/lib/types/activity';
 import { ActivityFilters, ActivityPeriodFilter } from '@/lib/types/activity-filter';
-import { formatDateKR, formatDistance, formatDuration } from '@/lib/utils/format';
+import { formatDateKR, formatDistanceFromMeters, formatDurationFromSeconds } from '@/lib/utils/format';
 
 interface ActivityListProps {
   activities: RecentActivity[];
@@ -125,13 +125,13 @@ export function ActivityList({
                     <div>
                       <dt className="text-slate-500">거리</dt>
                       <dd className="font-semibold text-slate-900">
-                        {formatDistance(activity.distance / 1000)}
+                        {formatDistanceFromMeters(activity.distance)}
                       </dd>
                     </div>
                     <div>
                       <dt className="text-slate-500">이동 시간</dt>
                       <dd className="font-semibold text-slate-900">
-                        {formatDuration(Math.round(activity.movingTime / 60))}
+                        {formatDurationFromSeconds(activity.movingTime)}
                       </dd>
                     </div>
                     <div>
