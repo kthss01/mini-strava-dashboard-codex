@@ -40,6 +40,7 @@ export interface StravaActivity {
   total_elevation_gain: number;
   start_date: string;
   start_date_local: string;
+  start_latlng?: [number, number] | [];
   timezone: string;
   location_city: string | null;
   location_state: string | null;
