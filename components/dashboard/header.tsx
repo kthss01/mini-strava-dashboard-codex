@@ -1,3 +1,5 @@
+import { StravaConnectButton } from '@/components/auth/strava-connect-button';
+
 interface HeaderProps {
   isLoggedIn?: boolean;
 }
@@ -20,12 +22,7 @@ export function Header({ isLoggedIn = false }: HeaderProps) {
 
         <div className="flex w-full flex-col gap-2 rounded-xl border border-slate-200 bg-slate-50 p-4 lg:w-auto">
           <p className="text-xs font-medium text-slate-500">Strava 연결 상태</p>
-          <button
-            type="button"
-            className="inline-flex items-center justify-center rounded-lg bg-brand-orange px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90"
-          >
-            {isLoggedIn ? 'Strava 다시 연결' : 'Strava 계정 연결하기'}
-          </button>
+          <StravaConnectButton isLoggedIn={isLoggedIn} />
         </div>
       </div>
     </header>
