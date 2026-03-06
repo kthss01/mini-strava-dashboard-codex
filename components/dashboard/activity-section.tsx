@@ -3,8 +3,6 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import { ActivityList } from '@/components/dashboard/activity-list';
-import { toActivitySummary } from '@/lib/strava';
-import { ActivitySummary } from '@/lib/types/strava';
 import { RecentActivity } from '@/lib/types/activity';
 
 interface ActivityApiItem {
@@ -35,16 +33,9 @@ interface RecentActivitiesApiError {
 }
 
 interface ActivitySectionProps {
-  onSummaryChange: (summary: ActivitySummary) => void;
+  onActivitiesChange: (activities: RecentActivity[]) => void;
   onSelectedActivityChange: (activity: RecentActivity | null) => void;
 }
-
-const EMPTY_SUMMARY: ActivitySummary = {
-  totalActivities: 0,
-  totalDistanceKm: 0,
-  totalMovingTimeMin: 0,
-  totalElevationGainM: 0,
-};
 
 const isNumberPair = (value: unknown): value is [number, number] =>
   Array.isArray(value) &&
@@ -87,7 +78,7 @@ const normalizeActivities = (activities: ActivityApiItem[]): RecentActivity[] =>
     summaryPolyline: typeof activity.map.summary_polyline === 'string' ? activity.map.summary_polyline : null,
   }));
 
-export function ActivitySection({ onSummaryChange, onSelectedActivityChange }: ActivitySectionProps) {
+export function ActivitySection({ onActivitiesChange, onSelectedActivityChange }: ActivitySectionProps) {
   const [activities, setActivities] = useState<RecentActivity[]>([]);
   const [selectedActivityId, setSelectedActivityId] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -158,38 +149,15 @@ export function ActivitySection({ onSummaryChange, onSelectedActivityChange }: A
     };
   }, [onSelectedActivityChange]);
 
-  const summary = useMemo(() => {
-    if (activities.length === 0) {
-      return EMPTY_SUMMARY;
-    }
-
-    return toActivitySummary(
-      activities.map((activity) => ({
-        id: activity.id,
-        name: activity.name,
-        type: activity.type,
-        distanceKm: activity.distance / 1000,
-        movingTimeMin: Math.round(activity.movingTime / 60),
-        elapsedTimeMin: 0,
-        elevationGainM: 0,
-        paceOrSpeedLabel: '-',
-        startDate: activity.startDate,
-        startDateLocal: activity.startDate,
-        timezone: '',
-        locationLabel: '',
-        mapPolyline: activity.summaryPolyline,
-      })),
-    );
-  }, [activities]);
-
-  useEffect(() => {
-    onSummaryChange(isLoading ? EMPTY_SUMMARY : summary);
-  }, [isLoading, onSummaryChange, summary]);
-
   const selectedActivity = useMemo(
     () => activities.find((activity) => activity.id === selectedActivityId) ?? null,
     [activities, selectedActivityId],
   );
+
+
+  useEffect(() => {
+    onActivitiesChange(isLoading ? [] : activities);
+  }, [activities, isLoading, onActivitiesChange]);
 
   useEffect(() => {
     onSelectedActivityChange(selectedActivity);
