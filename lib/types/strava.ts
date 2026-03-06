@@ -1,25 +1,25 @@
-export type ActivityType =
-  | 'Run'
-  | 'Ride'
-  | 'Walk'
-  | 'Hike'
-  | 'Swim'
-  | 'Workout';
+import type {
+  Activity,
+  ActivitySummary,
+  Athlete,
+  PublicStravaEnv,
+  ServerStravaEnv,
+  StravaActivityType,
+  StravaAthlete,
+} from '@/lib/strava';
 
-export interface StravaActivity {
-  id: number;
-  name: string;
-  type: ActivityType;
-  distanceKm: number;
-  movingTimeMin: number;
-  elevationGainM: number;
-  startDateLocal: string;
-  locationLabel: string;
-}
+export type ActivityType = StravaActivityType;
 
-export interface ActivitySummary {
-  totalActivities: number;
-  totalDistanceKm: number;
-  totalMovingTimeMin: number;
-  totalElevationGainM: number;
-}
+/**
+ * @deprecated Use `Activity` from `@/lib/strava` for transformed client-facing data.
+ */
+export type StravaActivity = Activity;
+
+export type {
+  Activity,
+  ActivitySummary,
+  Athlete,
+  PublicStravaEnv,
+  ServerStravaEnv,
+  StravaAthlete,
+};
