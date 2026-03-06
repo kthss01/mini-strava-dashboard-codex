@@ -20,6 +20,9 @@ const SUPPORTED_RIDE_SUB_TYPES = new Set([
   'EMountainBikeRide',
 ]);
 const DEFAULT_CACHE_TTL_SECONDS = 60 * 15;
+const DEFAULT_MAX_POINTS_PER_ACTIVITY = 220;
+const DEFAULT_MAX_OUTPUT_CELLS = 0;
+const DEFAULT_MIN_INTENSITY = 0;
 
 type HeatmapData = {
   points: ReturnType<typeof buildAggregatedHeatmapPoints>['points'];
@@ -70,7 +73,9 @@ const makeHeatmapCacheKey = (
   month: number | null,
   sportType: string,
   rideSubType: string,
-): string => [athleteId, year ?? 'all', month ?? 'all', sportType, rideSubType].join(':');
+  maxCells: number,
+  minIntensity: number,
+): string => [athleteId, year ?? 'all', month ?? 'all', sportType, rideSubType, maxCells, minIntensity].join(':');
 
 const toQueryNumber = (value: string | null): number | null => {
   if (!value) {
@@ -96,6 +101,37 @@ const toPositiveInteger = (value: string | undefined, fallback: number): number 
   }
 
   return parsed;
+};
+
+const toIntegerInRange = (
+  value: string | null,
+  fallback: number,
+  min: number,
+  max: number,
+): number => {
+  if (!value) {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  return Math.max(min, Math.min(max, parsed));
+};
+
+const toRatioInRange = (value: string | null, fallback: number): number => {
+  if (!value) {
+    return fallback;
+  }
+
+  const parsed = Number.parseFloat(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  return Math.max(0, Math.min(1, parsed));
 };
 
 const toUtcEpochWindow = (
@@ -206,22 +242,106 @@ const fetchActivitiesByFilterWindow = async (
   return activities;
 };
 
+const getActivityHeatmapCacheKey = (activity: StravaActivity, summaryPolyline: string): string => {
+  if (Number.isFinite(activity.id)) {
+    return `id:${activity.id}`;
+  }
+
+  let hash = 0;
+  for (let index = 0; index < summaryPolyline.length; index += 1) {
+    hash = (hash * 31 + summaryPolyline.charCodeAt(index)) | 0;
+  }
+
+  return `poly:${Math.abs(hash)}`;
+};
+
+const resolveDynamicMaxPointsPerActivity = (
+  activity: StravaActivity,
+  totalMatchedCount: number,
+  hasExplicitDateFilter: boolean,
+): number => {
+  const envBase = toPositiveInteger(process.env.STRAVA_HEATMAP_BASE_MAX_POINTS_PER_ACTIVITY, DEFAULT_MAX_POINTS_PER_ACTIVITY);
+  const activityDistanceKm = activity.distance > 0 ? activity.distance / 1000 : 0;
+  const distanceScale = activityDistanceKm >= 80 ? 1.2 : activityDistanceKm <= 8 ? 0.8 : 1;
+  const rangeScale = hasExplicitDateFilter ? 1.15 : 0.9;
+  const loadScale = totalMatchedCount > 1200 ? 0.55 : totalMatchedCount > 700 ? 0.72 : totalMatchedCount > 300 ? 0.85 : 1;
+
+  return Math.round(envBase * distanceScale * rangeScale * loadScale);
+};
+
+type ComputeHeatmapOptions = {
+  maxOutputCells: number;
+  minIntensity: number;
+};
+
 const computeHeatmapData = async (
   accessToken: string,
   year: number | null,
   month: number | null,
   sportType: string,
   rideSubType: string,
+  options: ComputeHeatmapOptions,
 ): Promise<HeatmapData> => {
   const timeWindow = toUtcEpochWindow(year, month);
   const fetchedActivities = await fetchActivitiesByFilterWindow(accessToken, timeWindow);
   const matched = fetchedActivities.filter((activity) => isMatchedFilter(activity, sportType, rideSubType));
   const polylineActivities = matched.filter((activity) => Boolean(activity.map?.summary_polyline));
-  const polylines = polylineActivities
-    .map((activity) => activity.map?.summary_polyline)
-    .filter((value): value is string => typeof value === 'string' && value.length > 0);
 
-  const { points, rawPointCount } = buildAggregatedHeatmapPoints(polylines);
+  const activityInputs = polylineActivities
+    .map((activity) => {
+      const summaryPolyline = activity.map?.summary_polyline;
+      if (!summaryPolyline || summaryPolyline.length === 0) {
+        return null;
+      }
+
+      return {
+        cacheKey: getActivityHeatmapCacheKey(activity, summaryPolyline),
+        summaryPolyline,
+        activity,
+      };
+    })
+    .filter(
+      (
+        value,
+      ): value is {
+        cacheKey: string;
+        summaryPolyline: string;
+        activity: StravaActivity;
+      } => Boolean(value),
+    );
+
+  const activityByCacheKey = new Map(activityInputs.map((item) => [item.cacheKey, item.activity]));
+
+  const { points, rawPointCount } = buildAggregatedHeatmapPoints(
+    activityInputs.map(({ cacheKey, summaryPolyline }) => ({ cacheKey, summaryPolyline })),
+    {
+      maxPointsResolver: (activityInput) => {
+        const target = activityByCacheKey.get(activityInput.cacheKey);
+        if (!target) {
+          return DEFAULT_MAX_POINTS_PER_ACTIVITY;
+        }
+
+        return resolveDynamicMaxPointsPerActivity(target, matched.length, timeWindow.isExplicitFilter);
+      },
+      maxOutputCells: options.maxOutputCells,
+      minIntensity: options.minIntensity,
+      onBeforeFinalize: (metrics) => {
+        if (process.env.STRAVA_HEATMAP_LOG_METRICS !== 'true') {
+          return;
+        }
+
+        console.info('[activities-heatmap] finalize-hook', {
+          elapsedMs: metrics.elapsedMs,
+          memoryUsageMb: metrics.memoryUsageMb,
+          rawPointCount: metrics.rawPointCount,
+          cellCount: metrics.cellCount,
+          activityCount: metrics.activityCount,
+          maxOutputCells: options.maxOutputCells,
+          minIntensity: options.minIntensity,
+        });
+      },
+    },
+  );
 
   const totalDistanceKm = Number((matched.reduce((sum, activity) => sum + activity.distance, 0) / 1000).toFixed(2));
   const totalMovingTimeHours = Number((matched.reduce((sum, activity) => sum + activity.moving_time, 0) / 3600).toFixed(1));
@@ -261,6 +381,8 @@ const getCachedHeatmapData = async (
     month: number | null;
     sportType: string;
     rideSubType: string;
+    maxOutputCells: number;
+    minIntensity: number;
   },
 ): Promise<{ data: HeatmapData; cacheHit: boolean }> => {
   if (process.env.NEXT_RUNTIME === 'edge') {
@@ -272,7 +394,17 @@ const getCachedHeatmapData = async (
       return { data: cached.value, cacheHit: true };
     }
 
-    const data = await computeHeatmapData(accessToken, params.year, params.month, params.sportType, params.rideSubType);
+    const data = await computeHeatmapData(
+      accessToken,
+      params.year,
+      params.month,
+      params.sportType,
+      params.rideSubType,
+      {
+        maxOutputCells: params.maxOutputCells,
+        minIntensity: params.minIntensity,
+      },
+    );
     edgeCache.set(cacheKey, {
       value: data,
       expiresAt: now + ttlSeconds * 1000,
@@ -285,7 +417,17 @@ const getCachedHeatmapData = async (
   const cachedResolver = unstable_cache(
     async () => {
       computed = true;
-      return computeHeatmapData(accessToken, params.year, params.month, params.sportType, params.rideSubType);
+      return computeHeatmapData(
+        accessToken,
+        params.year,
+        params.month,
+        params.sportType,
+        params.rideSubType,
+        {
+          maxOutputCells: params.maxOutputCells,
+          minIntensity: params.minIntensity,
+        },
+      );
     },
     ['strava-heatmap', cacheKey],
     {
@@ -312,6 +454,16 @@ export async function GET(request: NextRequest) {
     const month = toQueryNumber(request.nextUrl.searchParams.get('month'));
     const sportType = request.nextUrl.searchParams.get('sportType') ?? 'all';
     const rideSubType = request.nextUrl.searchParams.get('rideSubType') ?? 'all';
+    const maxOutputCells = toIntegerInRange(
+      request.nextUrl.searchParams.get('maxCells'),
+      DEFAULT_MAX_OUTPUT_CELLS,
+      0,
+      10000,
+    );
+    const minIntensity = toRatioInRange(
+      request.nextUrl.searchParams.get('minIntensity'),
+      DEFAULT_MIN_INTENSITY,
+    );
 
     if (month && (month < 1 || month > 12)) {
       return apiError(400, 'INVALID_MONTH', 'month는 1~12 범위여야 합니다.');
@@ -340,6 +492,8 @@ export async function GET(request: NextRequest) {
       month,
       sportType,
       rideSubType,
+      maxOutputCells,
+      minIntensity,
     );
 
     const { data, cacheHit } = await getCachedHeatmapData(
@@ -351,6 +505,8 @@ export async function GET(request: NextRequest) {
         month,
         sportType,
         rideSubType,
+        maxOutputCells,
+        minIntensity,
       },
     );
 
