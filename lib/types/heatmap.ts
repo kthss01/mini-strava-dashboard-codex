@@ -1,9 +1,18 @@
 export type HeatmapSportType = 'all' | 'Ride' | 'Run' | 'Walk' | 'Hike';
+export type HeatmapRideSubType =
+  | 'all'
+  | 'Ride'
+  | 'GravelRide'
+  | 'MountainBikeRide'
+  | 'VirtualRide'
+  | 'EBikeRide'
+  | 'EMountainBikeRide';
 
 export interface HeatmapFilters {
   year: 'all' | number;
   month: 'all' | number;
   sportType: HeatmapSportType;
+  rideSubType: HeatmapRideSubType;
 }
 
 export interface HeatmapPoint {
@@ -18,6 +27,13 @@ export interface HeatmapStats {
   usedPolylineActivityCount: number;
   rawPointCount: number;
   aggregatedPointCount: number;
+  totalDistanceKm: number;
+  totalMovingTimeHours: number;
+  totalElevationGainM: number;
+  typeBreakdown: Array<{
+    type: string;
+    count: number;
+  }>;
 }
 
 export interface HeatmapApiSuccess {

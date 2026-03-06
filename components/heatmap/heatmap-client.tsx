@@ -25,6 +25,16 @@ const SPORT_OPTIONS: Array<{ label: string; value: HeatmapSportType }> = [
   { label: 'Hike', value: 'Hike' },
 ];
 
+const RIDE_SUB_TYPE_OPTIONS = [
+  { label: '전체 Ride', value: 'all' },
+  { label: 'Ride', value: 'Ride' },
+  { label: 'GravelRide', value: 'GravelRide' },
+  { label: 'MountainBikeRide', value: 'MountainBikeRide' },
+  { label: 'VirtualRide', value: 'VirtualRide' },
+  { label: 'EBikeRide', value: 'EBikeRide' },
+  { label: 'EMountainBikeRide', value: 'EMountainBikeRide' },
+] as const;
+
 const currentYear = new Date().getFullYear();
 const yearOptions = Array.from({ length: 8 }, (_, idx) => currentYear - idx);
 const monthOptions = Array.from({ length: 12 }, (_, idx) => idx + 1);
@@ -33,6 +43,7 @@ const DEFAULT_FILTERS: HeatmapFilters = {
   year: 'all',
   month: 'all',
   sportType: 'all',
+  rideSubType: 'all',
 };
 
 export function HeatmapClient() {
@@ -40,6 +51,7 @@ export function HeatmapClient() {
   const [points, setPoints] = useState<HeatmapPoint[]>([]);
   const [stats, setStats] = useState<HeatmapStats | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [loadingProgress, setLoadingProgress] = useState(0);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [hasRequested, setHasRequested] = useState(false);
 
@@ -48,20 +60,34 @@ export function HeatmapClient() {
   const summary = useMemo(() => {
     if (!stats) return null;
 
+    const breakdownSummary =
+      stats.typeBreakdown.length > 0
+        ? stats.typeBreakdown.slice(0, 3).map((item) => `${item.type} ${item.count}회`).join(' · ')
+        : '-';
+
     return [
       { label: '조회된 활동', value: `${stats.matchedActivityCount}개` },
       { label: '경로 포함 활동', value: `${stats.usedPolylineActivityCount}개` },
       { label: '집계된 히트 포인트', value: `${stats.aggregatedPointCount.toLocaleString()}개` },
+      { label: '총 이동 거리', value: `${stats.totalDistanceKm.toLocaleString()} km` },
+      { label: '총 이동 시간', value: `${stats.totalMovingTimeHours.toLocaleString()} 시간` },
+      { label: '총 상승 고도', value: `${stats.totalElevationGainM.toLocaleString()} m` },
+      { label: '활동 유형 분포', value: breakdownSummary },
     ];
   }, [stats]);
 
   const onClickFetch = async () => {
     setIsLoading(true);
+    setLoadingProgress(5);
     setErrorMessage(null);
     setHasRequested(true);
 
     try {
-      const response = await fetchHeatmapActivities(filters);
+      const response = await fetchHeatmapActivities(filters, {
+        onProgress: (percent) => {
+          setLoadingProgress(percent);
+        },
+      });
       setPoints(response.points);
       setStats(response.stats);
     } catch (error) {
@@ -135,10 +161,31 @@ export function HeatmapClient() {
                     setFilters((prev) => ({
                       ...prev,
                       sportType: event.target.value as HeatmapSportType,
+                      rideSubType: event.target.value === 'Ride' ? prev.rideSubType : 'all',
                     }))
                   }
                 >
                   {SPORT_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label htmlFor="heatmap-ride-sub-type" className="mb-1 block text-xs font-semibold text-slate-600">Ride 세부 종류</label>
+                <select
+                  id="heatmap-ride-sub-type"
+                  disabled={filters.sportType !== 'Ride'}
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 disabled:bg-slate-100"
+                  value={filters.rideSubType}
+                  onChange={(event) =>
+                    setFilters((prev) => ({
+                      ...prev,
+                      rideSubType: event.target.value as HeatmapFilters['rideSubType'],
+                    }))
+                  }
+                >
+                  {RIDE_SUB_TYPE_OPTIONS.map((option) => (
                     <option key={option.value} value={option.value}>{option.label}</option>
                   ))}
                 </select>
@@ -159,9 +206,9 @@ export function HeatmapClient() {
             <SectionShell title="간단 통계">
               <dl className="space-y-3 text-sm">
                 {summary.map((item) => (
-                  <div key={item.label} className="flex items-center justify-between">
+                  <div key={item.label} className="flex items-center justify-between gap-4">
                     <dt className="text-slate-500">{item.label}</dt>
-                    <dd className="font-semibold text-slate-900">{item.value}</dd>
+                    <dd className="text-right font-semibold text-slate-900">{item.value}</dd>
                   </div>
                 ))}
               </dl>
@@ -172,7 +219,17 @@ export function HeatmapClient() {
         <div className="lg:col-span-8">
           <SectionShell title="활동 히트맵" description="진한 색상일수록 자주 지나간 구간입니다.">
             <div className="h-[560px] overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
-              {isLoading ? <div className="flex h-full items-center justify-center text-sm text-slate-700">히트맵 데이터를 불러오는 중...</div> : null}
+              {isLoading ? (
+                <div className="flex h-full flex-col items-center justify-center gap-3 px-8">
+                  <div className="h-3 w-full max-w-md overflow-hidden rounded-full bg-slate-200">
+                    <div
+                      className="h-full rounded-full bg-blue-600 transition-all"
+                      style={{ width: `${loadingProgress}%` }}
+                    />
+                  </div>
+                  <p className="text-sm font-semibold text-slate-700">히트맵 데이터를 불러오는 중... {loadingProgress}%</p>
+                </div>
+              ) : null}
               {!isLoading && errorMessage ? <div className="flex h-full items-center justify-center px-6 text-center text-sm text-rose-600">{errorMessage}</div> : null}
               {!isLoading && !errorMessage && !hasRequested ? <div className="flex h-full items-center justify-center px-6 text-center text-sm text-slate-600">필터를 설정하고 &quot;히트맵 불러오기&quot;를 눌러주세요.</div> : null}
               {!isLoading && !errorMessage && hasRequested && !hasPoints ? <div className="flex h-full items-center justify-center px-6 text-center text-sm text-slate-600">조건에 맞는 경로 데이터가 없습니다.</div> : null}
