@@ -8,7 +8,7 @@ import L, { LatLngExpression } from 'leaflet';
 import { MapContainer, Polyline, TileLayer, useMap } from 'react-leaflet';
 import 'leaflet.heat';
 
-import { HeatmapPoint } from '@/lib/types/heatmap';
+import { HeatmapPoint, HeatmapRoute } from '@/lib/types/heatmap';
 
 const DEFAULT_CENTER: LatLngExpression = [37.5665, 126.978];
 const DEFAULT_ZOOM = 11;
@@ -93,38 +93,53 @@ function HeatLayer({ points }: { points: HeatmapPoint[] }) {
   return null;
 }
 
-function ExactRouteLayer({ points }: { points: HeatmapPoint[] }) {
+function ExactRouteLayer({ routes }: { routes: HeatmapRoute[] }) {
   const map = useMap();
-  const positions = points.map((point) => [point.lat, point.lng] as [number, number]);
+  const routePositions = routes
+    .map((route) => route.points.map((point) => [point.lat, point.lng] as [number, number]))
+    .filter((positions) => positions.length > 1);
 
   useEffect(() => {
-    fitMapToPoints(map, points);
-  }, [map, points]);
+    const allPoints = routes.flatMap((route) =>
+      route.points.map((point) => ({
+        lat: point.lat,
+        lng: point.lng,
+        intensity: 1,
+      })),
+    );
 
-  if (positions.length < 2) {
+    fitMapToPoints(map, allPoints);
+  }, [map, routes]);
+
+  if (routePositions.length === 0) {
     return null;
   }
 
   return (
-    <Polyline
-      positions={positions}
-      pathOptions={{
-        color: '#2563eb',
-        weight: 3,
-        opacity: 0.9,
-      }}
-    />
+    <>
+      {routePositions.map((positions, index) => (
+        <Polyline
+          key={`route-${index}`}
+          positions={positions}
+          pathOptions={{
+            color: '#2563eb',
+            weight: 3,
+            opacity: 0.8,
+          }}
+        />
+      ))}
+    </>
   );
 }
 
-export function HeatmapMap({ points, showExactRoute }: { points: HeatmapPoint[]; showExactRoute: boolean }) {
+export function HeatmapMap({ points, routes, showExactRoute }: { points: HeatmapPoint[]; routes: HeatmapRoute[]; showExactRoute: boolean }) {
   return (
     <MapContainer center={DEFAULT_CENTER} zoom={DEFAULT_ZOOM} className="h-full w-full" scrollWheelZoom>
       <TileLayer
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
-      {showExactRoute ? <ExactRouteLayer points={points} /> : <HeatLayer points={points} />}
+      {showExactRoute ? <ExactRouteLayer routes={routes} /> : <HeatLayer points={points} />}
     </MapContainer>
   );
 }

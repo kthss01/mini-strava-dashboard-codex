@@ -12,6 +12,7 @@ import {
   HeatmapFilters,
   HeatmapLoadingPhase,
   HeatmapPoint,
+  HeatmapRoute,
   HeatmapSportType,
   HeatmapStats,
 } from '@/lib/types/heatmap';
@@ -67,6 +68,7 @@ const isAbortError = (error: unknown): boolean => error instanceof DOMException 
 export function HeatmapClient() {
   const [filters, setFilters] = useState<HeatmapFilters>(DEFAULT_FILTERS);
   const [points, setPoints] = useState<HeatmapPoint[]>([]);
+  const [routes, setRoutes] = useState<HeatmapRoute[]>([]);
   const [stats, setStats] = useState<HeatmapStats | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [loadingPhase, setLoadingPhase] = useState<HeatmapLoadingPhase>('auth');
@@ -126,6 +128,7 @@ export function HeatmapClient() {
       }
 
       setPoints(response.points);
+      setRoutes(response.routes);
       setStats(response.stats);
       const responseTimings = response.meta?.timings ?? response.meta?.timingsMs;
       if (responseTimings) {
@@ -303,7 +306,7 @@ export function HeatmapClient() {
               {errorMessage ? <div className="absolute inset-x-0 bottom-0 z-20 bg-rose-50 px-4 py-2 text-center text-sm text-rose-600">{errorMessage}</div> : null}
               {!hasRequested ? <div className="flex h-full items-center justify-center px-6 text-center text-sm text-slate-600">필터를 설정하고 &quot;히트맵 불러오기&quot;를 눌러주세요.</div> : null}
               {hasRequested && !hasPoints ? <div className="flex h-full items-center justify-center px-6 text-center text-sm text-slate-600">조건에 맞는 경로 데이터가 없습니다.</div> : null}
-              {hasPoints ? <HeatmapMap points={points} showExactRoute={showExactRoute} /> : null}
+              {hasPoints ? <HeatmapMap points={points} routes={routes} showExactRoute={showExactRoute} /> : null}
             </div>
           </SectionShell>
         </div>

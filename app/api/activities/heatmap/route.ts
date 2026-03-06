@@ -5,6 +5,7 @@ import { apiError } from '@/lib/api-response';
 import { getValidStravaSession } from '@/lib/strava-oauth';
 import { StravaActivity, getServerStravaEnv } from '@/lib/strava';
 import { buildAggregatedHeatmapPoints } from '@/lib/utils/heatmap';
+import { decodePolyline } from '@/lib/utils/polyline';
 
 const STRAVA_ACTIVITIES_PER_PAGE = 200;
 const MAX_STRAVA_PAGE = 30;
@@ -26,6 +27,12 @@ const DEFAULT_MIN_INTENSITY = 0;
 
 type HeatmapData = {
   points: ReturnType<typeof buildAggregatedHeatmapPoints>['points'];
+  routes: Array<{
+    points: Array<{
+      lat: number;
+      lng: number;
+    }>;
+  }>;
   stats: {
     fetchedActivityCount: number;
     matchedActivityCount: number;
@@ -313,6 +320,19 @@ const computeHeatmapData = async (
   const matched = fetchedActivities.filter((activity) => isMatchedFilter(activity, sportType, rideSubType));
   const polylineActivities = matched.filter((activity) => Boolean(activity.map?.summary_polyline));
 
+  const routes = polylineActivities
+    .map((activity) => {
+      const summaryPolyline = activity.map?.summary_polyline;
+      if (!summaryPolyline) {
+        return null;
+      }
+
+      return {
+        points: decodePolyline(summaryPolyline),
+      };
+    })
+    .filter((value): value is { points: Array<{ lat: number; lng: number }> } => Boolean(value));
+
   const activityInputs = polylineActivities
     .map((activity) => {
       const summaryPolyline = activity.map?.summary_polyline;
@@ -387,6 +407,7 @@ const computeHeatmapData = async (
 
   return {
     points,
+    routes,
     stats: {
       fetchedActivityCount: fetchedActivities.length,
       matchedActivityCount: matched.length,
@@ -590,6 +611,7 @@ export async function GET(request: NextRequest) {
         success: true,
         data: {
           points: data.points,
+          routes: data.routes,
           stats: data.stats,
           meta: {
             phase: 'aggregateRoutes',
