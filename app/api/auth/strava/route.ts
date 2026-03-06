@@ -3,9 +3,9 @@ import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 
 import { getPublicStravaEnv } from '@/lib/strava';
+import { STRAVA_OAUTH_STATE_COOKIE } from '@/lib/strava-oauth';
 
 const STRAVA_OAUTH_AUTHORIZE_URL = 'https://www.strava.com/oauth/authorize';
-const STRAVA_OAUTH_STATE_COOKIE = 'strava_oauth_state';
 
 const createAuthorizeUrl = () => {
   const { clientId, redirectUri, scopes } = getPublicStravaEnv();
