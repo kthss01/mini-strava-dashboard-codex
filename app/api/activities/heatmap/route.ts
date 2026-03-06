@@ -36,7 +36,29 @@ type HeatmapData = {
     totalMovingTimeHours: number;
     totalElevationGainM: number;
     typeBreakdown: Array<{ type: string; count: number }>;
+    timingsMs: {
+      stravaFetch: number;
+      filter: number;
+      polylineAggregate: number;
+    };
   };
+};
+
+type RouteTimingsMs = {
+  session: number;
+  stravaFetch: number;
+  filter: number;
+  polylineAggregate: number;
+  responseSerialize: number;
+  total: number;
+};
+
+const now = (): number => {
+  if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
+    return performance.now();
+  }
+
+  return Date.now();
 };
 
 type MemoryCacheItem = {
@@ -282,8 +304,12 @@ const computeHeatmapData = async (
   rideSubType: string,
   options: ComputeHeatmapOptions,
 ): Promise<HeatmapData> => {
+  const fetchStart = now();
   const timeWindow = toUtcEpochWindow(year, month);
   const fetchedActivities = await fetchActivitiesByFilterWindow(accessToken, timeWindow);
+  const stravaFetch = now() - fetchStart;
+
+  const filterStart = now();
   const matched = fetchedActivities.filter((activity) => isMatchedFilter(activity, sportType, rideSubType));
   const polylineActivities = matched.filter((activity) => Boolean(activity.map?.summary_polyline));
 
@@ -309,7 +335,9 @@ const computeHeatmapData = async (
         activity: StravaActivity;
       } => Boolean(value),
     );
+  const filter = now() - filterStart;
 
+  const polylineAggregateStart = now();
   const activityByCacheKey = new Map(activityInputs.map((item) => [item.cacheKey, item.activity]));
 
   const { points, rawPointCount } = buildAggregatedHeatmapPoints(
@@ -355,6 +383,7 @@ const computeHeatmapData = async (
   )
     .map(([type, count]) => ({ type, count }))
     .sort((a, b) => b.count - a.count);
+  const polylineAggregate = now() - polylineAggregateStart;
 
   return {
     points,
@@ -368,6 +397,11 @@ const computeHeatmapData = async (
       totalMovingTimeHours,
       totalElevationGainM,
       typeBreakdown,
+      timingsMs: {
+        stravaFetch: Number(stravaFetch.toFixed(2)),
+        filter: Number(filter.toFixed(2)),
+        polylineAggregate: Number(polylineAggregate.toFixed(2)),
+      },
     },
   };
 };
@@ -443,12 +477,27 @@ const getCachedHeatmapData = async (
 };
 
 export async function GET(request: NextRequest) {
+  const requestStartedAt = now();
+  const routeTimings: RouteTimingsMs = {
+    session: 0,
+    stravaFetch: 0,
+    filter: 0,
+    polylineAggregate: 0,
+    responseSerialize: 0,
+    total: 0,
+  };
+  let lastSuccessfulStep: 'session' | 'compute' | 'responseSerialize' | null = null;
+  let fetchedActivityCount: number | null = null;
+
   try {
+    const sessionStart = now();
     const sessionResult = await getValidStravaSession();
+    routeTimings.session = Number((now() - sessionStart).toFixed(2));
 
     if (!sessionResult.ok) {
       return apiError(sessionResult.status, sessionResult.code, sessionResult.message);
     }
+    lastSuccessfulStep = 'session';
 
     const year = toQueryNumber(request.nextUrl.searchParams.get('year'));
     const month = toQueryNumber(request.nextUrl.searchParams.get('month'));
@@ -509,6 +558,32 @@ export async function GET(request: NextRequest) {
         minIntensity,
       },
     );
+    routeTimings.stravaFetch = data.stats.timingsMs.stravaFetch;
+    routeTimings.filter = data.stats.timingsMs.filter;
+    routeTimings.polylineAggregate = data.stats.timingsMs.polylineAggregate;
+    fetchedActivityCount = data.stats.fetchedActivityCount;
+    lastSuccessfulStep = 'compute';
+
+    const responseSerializeStart = now();
+    routeTimings.total = Number((now() - requestStartedAt).toFixed(2));
+    routeTimings.responseSerialize = Number((now() - responseSerializeStart).toFixed(2));
+
+    if (process.env.NODE_ENV === 'development') {
+      console.info('[activities-heatmap] timings', {
+        params: {
+          year,
+          month,
+          sportType,
+          rideSubType,
+          maxOutputCells,
+          minIntensity,
+        },
+        fetchedActivityCount,
+        cacheHit,
+        timingsMs: routeTimings,
+      });
+    }
+    lastSuccessfulStep = 'responseSerialize';
 
     return NextResponse.json(
       {
@@ -519,6 +594,7 @@ export async function GET(request: NextRequest) {
           meta: {
             cacheHit,
             cacheTtlSeconds: ttlSeconds,
+            timingsMs: routeTimings,
           },
         },
       },
@@ -526,7 +602,25 @@ export async function GET(request: NextRequest) {
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unexpected server error occurred.';
+    routeTimings.total = Number((now() - requestStartedAt).toFixed(2));
     console.error('[activities-heatmap] Unexpected server error', error);
-    return apiError(500, 'INTERNAL_SERVER_ERROR', message);
+
+    return NextResponse.json(
+      {
+        success: false,
+        error: {
+          code: 'INTERNAL_SERVER_ERROR',
+          message,
+        },
+        data: {
+          meta: {
+            timingsMs: routeTimings,
+            lastSuccessfulStep,
+            fetchedActivityCount,
+          },
+        },
+      },
+      { status: 500 },
+    );
   }
 }
