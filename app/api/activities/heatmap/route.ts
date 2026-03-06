@@ -7,6 +7,8 @@ import { buildAggregatedHeatmapPoints } from '@/lib/utils/heatmap';
 
 const STRAVA_ACTIVITIES_PER_PAGE = 200;
 const MAX_STRAVA_PAGE = 30;
+const MAX_STRAVA_PAGE_FOR_ALL = 12;
+const DEFAULT_ALL_LOOKBACK_MONTHS = 18;
 const SUPPORTED_TYPES = new Set(['Ride', 'Run', 'Walk', 'Hike']);
 const SUPPORTED_RIDE_SUB_TYPES = new Set([
   'Ride',
@@ -30,10 +32,49 @@ const toQueryNumber = (value: string | null): number | null => {
   return parsed;
 };
 
-const isMatchedFilter = (
-  activity: StravaActivity,
+const toPositiveInteger = (value: string | undefined, fallback: number): number => {
+  if (!value) {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+
+  return parsed;
+};
+
+const toUtcEpochWindow = (
   year: number | null,
   month: number | null,
+): { after: number | null; before: number | null; isExplicitFilter: boolean } => {
+  if (!year) {
+    return { after: null, before: null, isExplicitFilter: false };
+  }
+
+  if (!month) {
+    return {
+      after: Math.floor(Date.UTC(year, 0, 1, 0, 0, 0, 0) / 1000),
+      before: Math.floor(Date.UTC(year + 1, 0, 1, 0, 0, 0, 0) / 1000),
+      isExplicitFilter: true,
+    };
+  }
+
+  return {
+    after: Math.floor(Date.UTC(year, month - 1, 1, 0, 0, 0, 0) / 1000),
+    before: Math.floor(Date.UTC(year, month, 1, 0, 0, 0, 0) / 1000),
+    isExplicitFilter: true,
+  };
+};
+
+const getDefaultAllAfterEpoch = (lookbackMonths: number): number => {
+  const now = new Date();
+  return Math.floor(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - lookbackMonths, 1, 0, 0, 0, 0) / 1000);
+};
+
+const isMatchedFilter = (
+  activity: StravaActivity,
   sportType: string,
   rideSubType: string,
 ): boolean => {
@@ -45,34 +86,38 @@ const isMatchedFilter = (
     return false;
   }
 
-  if (!year && !month) {
-    return true;
-  }
-
-  const date = new Date(activity.start_date);
-  if (Number.isNaN(date.getTime())) {
-    return false;
-  }
-
-  if (year && date.getUTCFullYear() !== year) {
-    return false;
-  }
-
-  if (month && date.getUTCMonth() + 1 !== month) {
-    return false;
-  }
-
   return true;
 };
 
-const fetchAllActivities = async (accessToken: string): Promise<StravaActivity[]> => {
+type FetchActivitiesOptions = {
+  after: number | null;
+  before: number | null;
+  isExplicitFilter: boolean;
+};
+
+const fetchActivitiesByFilterWindow = async (
+  accessToken: string,
+  options: FetchActivitiesOptions,
+): Promise<StravaActivity[]> => {
   const { apiBaseUrl } = getServerStravaEnv();
+  const maxPageForAll = toPositiveInteger(process.env.STRAVA_HEATMAP_MAX_PAGE_FOR_ALL, MAX_STRAVA_PAGE_FOR_ALL);
+  const allLookbackMonths = toPositiveInteger(process.env.STRAVA_HEATMAP_ALL_LOOKBACK_MONTHS, DEFAULT_ALL_LOOKBACK_MONTHS);
+
+  const after = options.isExplicitFilter ? options.after : options.after ?? getDefaultAllAfterEpoch(allLookbackMonths);
+  const before = options.before;
+  const pageLimit = options.isExplicitFilter ? MAX_STRAVA_PAGE : Math.min(MAX_STRAVA_PAGE, maxPageForAll);
   const activities: StravaActivity[] = [];
 
-  for (let page = 1; page <= MAX_STRAVA_PAGE; page += 1) {
+  for (let page = 1; page <= pageLimit; page += 1) {
     const url = new URL(`${apiBaseUrl}/athlete/activities`);
     url.searchParams.set('page', String(page));
     url.searchParams.set('per_page', String(STRAVA_ACTIVITIES_PER_PAGE));
+    if (after) {
+      url.searchParams.set('after', String(after));
+    }
+    if (before) {
+      url.searchParams.set('before', String(before));
+    }
 
     const response = await fetch(url.toString(), {
       method: 'GET',
@@ -125,6 +170,10 @@ export async function GET(request: NextRequest) {
       return apiError(400, 'INVALID_MONTH', 'month는 1~12 범위여야 합니다.');
     }
 
+    if (month && !year) {
+      return apiError(400, 'INVALID_DATE_FILTER', 'month 필터를 사용하려면 year를 함께 지정해야 합니다.');
+    }
+
     if (sportType !== 'all' && !SUPPORTED_TYPES.has(sportType)) {
       return apiError(400, 'INVALID_SPORT_TYPE', '지원하지 않는 종목입니다.');
     }
@@ -137,8 +186,9 @@ export async function GET(request: NextRequest) {
       return apiError(400, 'INVALID_RIDE_SUB_TYPE_FILTER', 'Ride 세부 종목 필터는 Ride 선택 시에만 사용 가능합니다.');
     }
 
-    const allActivities = await fetchAllActivities(sessionResult.session.accessToken);
-    const matched = allActivities.filter((activity) => isMatchedFilter(activity, year, month, sportType, rideSubType));
+    const timeWindow = toUtcEpochWindow(year, month);
+    const fetchedActivities = await fetchActivitiesByFilterWindow(sessionResult.session.accessToken, timeWindow);
+    const matched = fetchedActivities.filter((activity) => isMatchedFilter(activity, sportType, rideSubType));
     const polylineActivities = matched.filter((activity) => Boolean(activity.map?.summary_polyline));
     const polylines = polylineActivities
       .map((activity) => activity.map?.summary_polyline)
@@ -165,7 +215,7 @@ export async function GET(request: NextRequest) {
         data: {
           points,
           stats: {
-            fetchedActivityCount: allActivities.length,
+            fetchedActivityCount: fetchedActivities.length,
             matchedActivityCount: matched.length,
             usedPolylineActivityCount: polylineActivities.length,
             rawPointCount,
